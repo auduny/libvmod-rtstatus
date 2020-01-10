@@ -122,17 +122,27 @@ rtstatus_print_rate_prom(struct rtstatus_priv *rs)
                 ratio = 0;
 
 	up = rs->up;
-	VSB_printf(rs->vsb, "\"uptime\": \"%u+%02u:%02u:%02u\",\n",
-	    up / 86400, (up % 86400) / 3600, (up % 3600) / 60, up % 60);
-	VSB_printf(rs->vsb, "\"uptime_sec\": %u,\n", up);
-        VSB_printf(rs->vsb, "\"absolute_hitrate\": %.2f,\n", ratio * 100);
+	VSB_cat(rs->vsb,"# HELP varnish_uptime Process uptime in seconds\n");
+	VSB_cat(rs->vsb,"# TYPE varnish_main_uptime counter\n");
+	VSB_printf(rs->vsb, "varnish_uptime %u\n", up);
+	VSB_cat(rs->vsb, "# HELP varnish_hitrate Average Hit-rate\n");
+	VSB_cat(rs->vsb, "# TYPE varnish_hitrate gauge\n");
+    VSB_printf(rs->vsb, "varnish_hitrate %.2f\n", ratio * 100);
 
 	if (up == 0) {
-		VSB_cat(rs->vsb, "\"avg_hitrate\": null,\n");
-		VSB_cat(rs->vsb, "\"avg_load\": null,\n");
+		VSB_cat(rs->vsb, "# HELP varnish_avg_hitrate Average Hit-rate\n");
+		VSB_cat(rs->vsb, "# TYPE varnish_avg_hitrate gauge\n");
+		VSB_cat(rs->vsb, "varnish_avg_hitrate 0\n");
+		VSB_cat(rs->vsb, "# HELP varnish_avg_load Average Load\n");
+		VSB_cat(rs->vsb, "# TYPE varnish_avg_load gauge\n");
+		VSB_cat(rs->vsb, "varnish_avg_load 0\n");
 	} else {
-		VSB_printf(rs->vsb, "\"avg_hitrate\": %.2f,\n", (ratio * 100) / up);
-		VSB_printf(rs->vsb, "\"avg_load\": %.2f,\n", (double)rs->req / up);
+		VSB_cat(rs->vsb, "# HELP varnish_avg_hitrate Average Hit-rate\n");
+		VSB_cat(rs->vsb, "# TYPE varnish_avg_hitrate gauge\n");
+		VSB_printf(rs->vsb, "varnish_avg_hitrate %.2f\n", (ratio * 100) / up);
+		VSB_cat(rs->vsb, "# HELP varnish_avg_load Average Load\n");
+		VSB_cat(rs->vsb, "# TYPE varnish_avg_load gauge\n");
+		VSB_printf(rs->vsb, "varnish_avg_load %.2f\n", (double)rs->req / up);
 	}
 }
 
