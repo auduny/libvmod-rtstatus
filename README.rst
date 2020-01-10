@@ -24,8 +24,8 @@ import rtstatus;
 DESCRIPTION
 ===========
 
-A vmod that lets you query your Varnish server for a JSON object the
-counters. With the accompanied VCL code,
+A vmod that lets you query your Varnish server for a JSON or Prometheus 
+output of the internal varnish counters. With the accompanied VCL code,
 
 visiting the URL /rtstatus.json on the Varnish server will produce an
 application/json response of the following format::
@@ -79,31 +79,34 @@ Make targets:
 * make check - runs the unit tests in ``src/tests/*.vtc``
 
 In your VCL you could then use this vmod along the following lines::
-        
-	import std;
-	import rtstatus;
 
-	sub vcl_recv {
-		if (req.url ~ "/rtstatus.json") {
-        		error 700 "OK";
-        	}
-		if (req.url ~ "/rtstatus") {
-			error 800 "OK";
-		}
-	}
+    import rtstatus;
 
-	sub vcl_error {
-		if(obj.status == 700){
-			set obj.status = 200;
-			synthetic rtstatus.rtstatus();
-			return (deliver);
-		}
-		if(obj.status == 800) {
-			set obj.http.Content-Type = "text/html; charset=utf-8";
-			synthetic std.fileread("/home/arianna/libvmod-rtstatus/src/rtstatus.html");
-			return (deliver);
-			}
-	}
+    sub vcl_recv {
+        if (req.url == "/rtstatus.json" || req.url == "/rtstatus.html") {
+            return (synth(200));
+        }
+        if (req.url == "/metrics") {
+            return (synth(200));
+        }
+    }
+
+    sub vcl_synth {
+        if (req.url == "/rtstatus.json") {
+            rtstatus.synthetic_json();
+            return (deliver);
+        }
+        if (req.url == "/metrics") {
+            rtstatus.synthetic_prom();
+            return (deliver);
+        }
+        if (req.url == "/rtstatus.html") {
+            rtstatus.synthetic_html();
+            return (deliver);
+        }
+    }   
+
+
 
 COPYRIGHT
 =========

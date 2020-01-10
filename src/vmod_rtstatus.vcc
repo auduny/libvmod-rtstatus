@@ -31,6 +31,12 @@ Description
 	Returns a JSON object with relevant Varnish counters. Takes care
 	of setting the content type.
 
+$Function VOID synthetic_prom()
+
+Description
+	Returns a prometheus object with relevant Varnish counters. Takes care
+	of setting the content type.
+
 $Function VOID synthetic_html()
 
 Description

@@ -109,6 +109,43 @@ rtstatus_print_rate(struct rtstatus_priv *rs)
 	}
 }
 
+static void
+rtstatus_print_rate_prom(struct rtstatus_priv *rs)
+{
+	double ratio, total;
+	unsigned up;
+
+	total = rs->hit + rs->miss;
+        if (total != 0)
+                ratio = rs->hit / total;
+        else
+                ratio = 0;
+
+	up = rs->up;
+	VSB_cat(rs->vsb,"# HELP varnish_uptime Process uptime in seconds\n");
+	VSB_cat(rs->vsb,"# TYPE varnish_main_uptime counter\n");
+	VSB_printf(rs->vsb, "varnish_uptime %u\n", up);
+	VSB_cat(rs->vsb, "# HELP varnish_hitrate Average Hit-rate\n");
+	VSB_cat(rs->vsb, "# TYPE varnish_hitrate gauge\n");
+    VSB_printf(rs->vsb, "varnish_hitrate %.2f\n", ratio * 100);
+
+	if (up == 0) {
+		VSB_cat(rs->vsb, "# HELP varnish_avg_hitrate Average Hit-rate\n");
+		VSB_cat(rs->vsb, "# TYPE varnish_avg_hitrate gauge\n");
+		VSB_cat(rs->vsb, "varnish_avg_hitrate 0\n");
+		VSB_cat(rs->vsb, "# HELP varnish_avg_load Average Load\n");
+		VSB_cat(rs->vsb, "# TYPE varnish_avg_load gauge\n");
+		VSB_cat(rs->vsb, "varnish_avg_load 0\n");
+	} else {
+		VSB_cat(rs->vsb, "# HELP varnish_avg_hitrate Average Hit-rate\n");
+		VSB_cat(rs->vsb, "# TYPE varnish_avg_hitrate gauge\n");
+		VSB_printf(rs->vsb, "varnish_avg_hitrate %.2f\n", (ratio * 100) / up);
+		VSB_cat(rs->vsb, "# HELP varnish_avg_load Average Load\n");
+		VSB_cat(rs->vsb, "# TYPE varnish_avg_load gauge\n");
+		VSB_printf(rs->vsb, "varnish_avg_load %.2f\n", (double)rs->req / up);
+	}
+}
+
 static int
 rtstatus_stats_cb(void *priv, const struct VSC_point *const pt)
 {
@@ -137,6 +174,35 @@ rtstatus_stats_cb(void *priv, const struct VSC_point *const pt)
 
 	return (0);
 }
+
+static int
+rtstatus_stats_cb_prom(void *priv, const struct VSC_point *const pt)
+{
+	struct rtstatus_priv *rs;
+	const char *type, *ident;
+	uint64_t val;
+
+	CAST_OBJ_NOTNULL(rs, priv, VMOD_RTSTATUS_MAGIC);
+
+	if (pt == NULL)
+		return (0);
+
+	type = pt->name;
+	ident = strchr(pt->name, '.');
+	XXXAN(ident);
+	val = *(const volatile uint64_t *)pt->ptr;
+
+	if (rs->name_len > 0)
+		VSB_cat(rs->vsb, ",\n");
+	rs->name_len = 1; /* NB: no need to compute an actual strlen. */
+
+	VSB_printf(rs->vsb,
+	    "varnish_%s_type_%.*s_ident_%s_descr_%s_value: %" PRIu64 "}",
+	    pt->name, (int)(ident - type), type, ident + 1, pt->sdesc, val);
+
+	return (0);
+}
+
 
 static int
 rtstatus_backend_cb(void *priv, const struct VSC_point *const pt)
@@ -170,6 +236,38 @@ rtstatus_backend_cb(void *priv, const struct VSC_point *const pt)
 	VSB_printf(rs->vsb, ", \"%s\": %" PRIu64, cnt, val);
 	return (0);
 }
+
+static int
+rtstatus_backend_cb_prom(void *priv, const struct VSC_point *const pt)
+{
+	struct rtstatus_priv *rs;
+	const char *be, *cnt;
+	uint64_t val;
+	int len;
+
+	CAST_OBJ(rs, priv, VMOD_RTSTATUS_MAGIC);
+
+	if (pt == NULL || strncmp(pt->name, "VBE.", 4))
+		return (0);
+
+	val = *(const volatile uint64_t *)pt->ptr;
+	be = pt->name + 4;
+	cnt = strrchr(be, '.');
+	XXXAN(cnt);
+	cnt++;
+	len = cnt - be;
+
+	if (len != rs->name_len || strncmp(be, rs->name, len)) {
+		rs->name = be;
+		rs->name_len = cnt - be;
+		VSB_printf(rs->vsb, "varnish_server_name %.*s",
+		    len - 1, be);
+	}
+
+	VSB_printf(rs->vsb, "_%s %" PRIu64, cnt, val);
+	return (0);
+}
+
 
 static int
 rtstatus_collect(struct rtstatus_priv *rs, struct vsm *vd)
@@ -215,6 +313,48 @@ rtstatus_collect(struct rtstatus_priv *rs, struct vsm *vd)
 	return (0);
 }
 
+static int
+rtstatus_collect_prom(struct rtstatus_priv *rs, struct vsm *vd)
+{
+	char vrt_hostname[255];
+	struct vsc *vsc;
+
+	CHECK_OBJ_NOTNULL(rs, VMOD_RTSTATUS_MAGIC);
+	AN(rs->vsb);
+	AN(vd);
+
+	vsc = VSC_New();
+	AN(vsc);
+
+	VSB_cat(rs->vsb, "# HELP This is a nice Prometheus backend\n");
+	rs->name_len = 0;
+	(void)VSC_Iter(vsc, vd, rtstatus_rate_cb, rs);
+	rtstatus_print_rate_prom(rs);
+
+	VSB_printf(rs->vsb, "varnish_version %s\n", VCS_String("V"));
+
+	gethostname(vrt_hostname, sizeof vrt_hostname);
+	VSB_printf(rs->vsb, "varnish_hostname: %s,\n", vrt_hostname);
+
+	VSB_cat(rs->vsb, "\"be_info\": [\n");
+	rs->name_len = 0;
+	(void)VSC_Iter(vsc, vd, rtstatus_backend_cb_prom, rs);
+	VSB_cat(rs->vsb, "}\n");
+	VSB_cat(rs->vsb, "],\n");
+
+	rs->name_len = 0;
+	(void)VSC_Iter(vsc, vd, rtstatus_stats_cb_prom, rs);
+
+	VSB_cat(rs->vsb, "\n}\n");
+
+	VSC_Destroy(&vsc, vd);
+
+	return (0);
+}
+
+
+
+
 /*--------------------------------------------------------------------*/
 
 VCL_VOID
@@ -245,6 +385,36 @@ vmod_synthetic_json(VRT_CTX)
 	VSM_Destroy(&vd);
 	VRT_SetHdr(ctx, &rststatus_content_type,
 	    "application/json; charset=utf-8", vrt_magic_string_end);
+}
+
+VCL_VOID
+vmod_synthetic_prom(VRT_CTX)
+{
+	struct rtstatus_priv rs;
+	struct vsm *vd;
+
+	if (ctx->method != VCL_MET_SYNTH) {
+		VRT_fail(ctx, "rtstatus: can only be used in vcl_synth");
+		return;
+	}
+
+	INIT_OBJ(&rs, VMOD_RTSTATUS_MAGIC);
+	vd = VSM_New();
+	AN(vd);
+
+	/* XXX: there is currently no n_arg in heritage */
+	if (VSM_Arg(vd, 'n', heritage.identity) < 0 || VSM_Attach(vd, -1)) {
+		VSM_Destroy(&vd);
+		VRT_fail(ctx, "rtstatus: can't open VSM for %s",
+		    heritage.identity);
+		return;
+	}
+
+	rs.vsb = ctx->specific;
+	rtstatus_collect_prom(&rs, vd);
+	VSM_Destroy(&vd);
+	VRT_SetHdr(ctx, &rststatus_content_type,
+	    "text/plain; charset=utf-8", vrt_magic_string_end);
 }
 
 VCL_VOID
