@@ -14,6 +14,7 @@ vcl 4.1;
 
 import std;
 import rtstatus;
+import directors;
 
 # Default backend definition. Set this to point to your content server.
 backend default {
@@ -21,6 +22,21 @@ backend default {
     .port = "8080";
 }
 
+backend backend_2 {
+    .host = "127.0.0.1";
+    .port = "8081";
+}
+
+backend backend_3 {
+    .host = "195.88.55.16";
+    .port = "80";
+}
+
+sub vcl_init {
+    new director_1 = directors.round_robin();
+    director_1.add_backend(backend_2);
+    director_1.add_backend(backend_3);
+}
 
 sub vcl_backend_response {
     # Happens after we have read the response headers from the backend.
@@ -41,6 +57,9 @@ sub vcl_recv {
     }
     if (req.url == "/metrics") {
         return (synth(200));
+    }
+    if (req.url == "/testurl") {
+        set req.backend_hint = director_1.backend();
     }
 }
 
